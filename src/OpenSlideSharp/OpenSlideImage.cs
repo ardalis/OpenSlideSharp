@@ -50,13 +50,15 @@ namespace OpenSlideSharp
         }
 
         /// <summary>
-        /// Add .dll directory to PATH
+        /// Add .dll directory to PATH and register native library resolver
         /// </summary>
         /// <param name="path"></param>
         /// <exception cref="OpenSlideException"/>
         public static void Initialize(string path = null)
         {
-            var openslide = Path.Combine(Directory.GetParent(Assembly.GetCallingAssembly().Location)?.FullName, Path.Combine("openslide", $"{(IntPtr.Size == 8 ? "x64" : "x86")}"));
+            // Use AppContext.BaseDirectory which works reliably in .NET Core/.NET 5+
+            var baseDir = AppContext.BaseDirectory;
+            var openslide = Path.Combine(baseDir, Path.Combine("openslide", $"{(IntPtr.Size == 8 ? "x64" : "x86")}"));
             path = string.IsNullOrEmpty(path) ? openslide : path;
             if (Directory.Exists(path))
             {
@@ -65,11 +67,49 @@ namespace OpenSlideSharp
                 {
                     Environment.SetEnvironmentVariable("PATH", $"{PATH};{path}");
                 }
+#if NET5_0_OR_GREATER
+                // Also use SetDllDirectory to ensure dependencies are found
+                SetDllDirectory(path);
+#endif
             }
+            _nativeLibraryPath = path;
         }
+
+#if NET5_0_OR_GREATER
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern bool SetDllDirectory(string lpPathName);
+#endif
+
+        private static string _nativeLibraryPath;
+        private static bool _resolverRegistered;
+
         static OpenSlideImage()
         {
             Initialize();
+            RegisterNativeLibraryResolver();
+        }
+
+        private static void RegisterNativeLibraryResolver()
+        {
+            if (_resolverRegistered) return;
+            _resolverRegistered = true;
+
+#if NET5_0_OR_GREATER
+            System.Runtime.InteropServices.NativeLibrary.SetDllImportResolver(
+                typeof(OpenSlideImage).Assembly,
+                (libraryName, assembly, searchPath) =>
+                {
+                    if (libraryName == Interop.NativeMethods.LibraryName)
+                    {
+                        var libraryPath = Path.Combine(_nativeLibraryPath, libraryName + ".dll");
+                        if (File.Exists(libraryPath))
+                        {
+                            return System.Runtime.InteropServices.NativeLibrary.Load(libraryPath);
+                        }
+                    }
+                    return IntPtr.Zero;
+                });
+#endif
         }
 
         /// <summary>
