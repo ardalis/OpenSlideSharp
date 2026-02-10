@@ -1,13 +1,15 @@
-﻿using Microsoft.Extensions.Primitives;
+﻿using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 using OpenSlideSharp.BitmapExtensions;
 using SingleSlideServer;
+using SingleSlideServer.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure services
 builder.Services.Configure<ImageOption>(builder.Configuration.GetSection("Image"));
 builder.Services.AddSingleton<ImageProvider>();
-builder.Services.AddControllers();
+builder.Services.AddSingleton<TileGeneratorService>();
 
 var app = builder.Build();
 
@@ -33,17 +35,103 @@ app.Map("/image_files", appBuilder =>
             return;
         }
 
-        var provider = context.RequestServices.GetService<ImageProvider>()!;
+        var options = context.RequestServices.GetRequiredService<IOptions<ImageOption>>().Value;
         var response = context.Response;
         response.ContentType = "image/jpeg";
-        await provider.DeepZoomGenerator.GetTileAsJpegStream(result.level, result.col, result.row, out var tmp).CopyToAsync(response.Body);
+
+        // Check disk cache first
+        if (options.EnableDiskCache)
+        {
+            var cachePath = Path.Combine(
+                options.TileCachePath,
+                result.level.ToString(),
+                $"{result.col}_{result.row}.jpeg");
+
+            if (File.Exists(cachePath))
+            {
+                await using var fileStream = File.OpenRead(cachePath);
+                await fileStream.CopyToAsync(response.Body);
+                return;
+            }
+        }
+
+        // Generate tile on-the-fly
+        var provider = context.RequestServices.GetRequiredService<ImageProvider>();
+        using var tileStream = provider.DeepZoomGenerator.GetTileAsJpegStream(result.level, result.col, result.row, out _);
+
+        // Optionally save to disk for future requests
+        if (options.EnableDiskCache)
+        {
+            var cachePath = Path.Combine(
+                options.TileCachePath,
+                result.level.ToString(),
+                $"{result.col}_{result.row}.jpeg");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+
+            // Read into memory so we can write to both file and response
+            using var memoryStream = new MemoryStream();
+            await tileStream.CopyToAsync(memoryStream);
+
+            // Save to disk
+            memoryStream.Position = 0;
+            await using (var fileStream = File.Create(cachePath))
+            {
+                await memoryStream.CopyToAsync(fileStream);
+            }
+
+            // Send to response
+            memoryStream.Position = 0;
+            await memoryStream.CopyToAsync(response.Body);
+        }
+        else
+        {
+            await tileStream.CopyToAsync(response.Body);
+        }
     });
+});
+
+// Tile generation API endpoints
+app.MapPost("/api/tiles/generate", async (TileGeneratorService generator, bool? overwrite, CancellationToken ct) =>
+{
+    var result = await generator.GenerateAllTilesAsync(overwrite ?? false, cancellationToken: ct);
+    return Results.Ok(new
+    {
+        status = "completed",
+        tilesGenerated = result.TilesGenerated,
+        tilesSkipped = result.TilesSkipped,
+        duration = result.Duration.ToString(@"hh\:mm\:ss\.fff")
+    });
+});
+
+app.MapGet("/api/tiles/stats", (TileGeneratorService generator) =>
+{
+    var (fileCount, totalSize) = generator.GetCacheStats();
+    var totalTiles = generator.GetTotalTileCount();
+    return Results.Ok(new
+    {
+        cachedTiles = fileCount,
+        totalTiles = totalTiles,
+        cachePercentage = totalTiles > 0 ? Math.Round((double)fileCount / totalTiles * 100, 2) : 0,
+        cacheSizeBytes = totalSize,
+        cacheSizeMB = Math.Round(totalSize / (1024.0 * 1024.0), 2)
+    });
+});
+
+app.MapDelete("/api/tiles/cache", (TileGeneratorService generator) =>
+{
+    generator.ClearCache();
+    return Results.Ok(new { status = "cache cleared" });
 });
 
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.UseRouting();
-app.MapControllers();
+
+// Deep Zoom Image descriptor
+app.MapGet("/image.dzi", (ImageProvider provider) =>
+{
+    return Results.Content(provider.DeepZoomGenerator.GetDzi(), "application/xml");
+});
 
 app.Run();
 

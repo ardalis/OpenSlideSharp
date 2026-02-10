@@ -339,3 +339,6 @@ ASALocalRun/
 # BeatPulse healthcheck temp database
 healthchecksdb
 test/OpenSlideSharp.Tests/Assets/CMU-1.svs
+
+# Tile cache
+tile_cache/

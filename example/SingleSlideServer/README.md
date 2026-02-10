@@ -30,10 +30,20 @@ The application expects an image file path to be configured in `appsettings.json
 ```json
 {
   "Image": {
-    "Path": "image.tiff"
+    "Path": "image.tiff",
+    "TileCachePath": "./tile_cache",
+    "EnableDiskCache": true
   }
 }
 ```
+
+### Configuration Options
+
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `Path` | Path to the whole-slide image file | `image.tiff` |
+| `TileCachePath` | Directory for cached tile images | `./tile_cache` |
+| `EnableDiskCache` | Enable/disable disk caching of tiles | `true` |
 
 ### Setting Up Your Image
 
@@ -82,11 +92,58 @@ The application will start and listen on the configured URLs (typically `http://
 
 ## Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `/` | Main viewer page (index.html) |
-| `/image.dzi` | Deep Zoom Image XML descriptor |
-| `/image_files/{level}/{col}_{row}.jpeg` | Individual image tiles |
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Main viewer page (index.html) |
+| `/image.dzi` | GET | Deep Zoom Image XML descriptor |
+| `/image_files/{level}/{col}_{row}.jpeg` | GET | Individual image tiles (cached if enabled) |
+| `/api/tiles/generate` | POST | Pre-generate all tiles to disk cache |
+| `/api/tiles/stats` | GET | Get cache statistics |
+| `/api/tiles/cache` | DELETE | Clear the tile cache |
+
+## Tile Caching
+
+When `EnableDiskCache` is `true`:
+- Tiles are checked on disk first before generating
+- Generated tiles are automatically saved to disk for future requests
+- Use `/api/tiles/generate` to pre-generate all tiles upfront
+
+### Pre-generating Tiles
+
+To pre-generate all tiles (useful for production):
+
+```bash
+curl -X POST http://localhost:5000/api/tiles/generate
+```
+
+With overwrite option to regenerate existing tiles:
+
+```bash
+curl -X POST "http://localhost:5000/api/tiles/generate?overwrite=true"
+```
+
+### Cache Statistics
+
+```bash
+curl http://localhost:5000/api/tiles/stats
+```
+
+Returns:
+```json
+{
+  "cachedTiles": 1234,
+  "totalTiles": 5000,
+  "cachePercentage": 24.68,
+  "cacheSizeBytes": 52428800,
+  "cacheSizeMB": 50.0
+}
+```
+
+### Clearing the Cache
+
+```bash
+curl -X DELETE http://localhost:5000/api/tiles/cache
+```
 
 ## Sample Images
 
