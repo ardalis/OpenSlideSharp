@@ -29,13 +29,6 @@ app.Map("/image_files", appBuilder =>
             return;
         }
 
-        // Accept both jpeg and png format requests
-        if (result.format != "jpeg" && result.format != "png")
-        {
-            await next();
-            return;
-        }
-
         var options = context.RequestServices.GetRequiredService<IOptions<ImageOption>>().Value;
         var provider = context.RequestServices.GetRequiredService<ImageProvider>();
         var dz = provider.DeepZoomGenerator;
@@ -139,16 +132,16 @@ app.MapDelete("/api/tiles/cache", (TileGeneratorService generator) =>
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// Deep Zoom Image descriptor
+// Deep Zoom Image descriptor - uses "jpeg" format but server serves PNG for highest levels
 app.MapGet("/image.dzi", (ImageProvider provider) =>
 {
-    return Results.Content(provider.DeepZoomGenerator.GetDzi(), "application/xml");
+    return Results.Content(provider.DeepZoomGenerator.GetDzi("jpeg"), "application/xml");
 });
 
 app.Run();
 
-// expression: /{level}/{col}_{row}.jpeg
-static bool TryParseDeepZoom(string expression, out (int level, int col, int row, string format) result)
+// expression: /{level}/{col}_{row}.jpeg (URL uses .jpeg but server may return PNG based on level)
+static bool TryParseDeepZoom(string expression, out (int level, int col, int row) result)
 {
     if (expression.Length < 4 || expression[0] != '/')
     {
@@ -156,7 +149,7 @@ static bool TryParseDeepZoom(string expression, out (int level, int col, int row
         return false;
     }
 
-    // seg: {level}/{col}_{row}.jpeg
+    // seg: {level}/{col}_{row}.tile
     StringSegment seg = new StringSegment(expression, 1, expression.Length - 1);
     int iPos = seg.IndexOf('/');
     if (iPos <= 0)
@@ -171,7 +164,7 @@ static bool TryParseDeepZoom(string expression, out (int level, int col, int row
         return false;
     }
 
-    // seg: {col}_{row}.jpeg
+    // seg: {col}_{row}.tile
     seg = seg.Subsegment(iPos + 1);
     iPos = seg.IndexOf('_');
     if (seg.IndexOf('/') >= 0 || iPos <= 0)
@@ -186,24 +179,17 @@ static bool TryParseDeepZoom(string expression, out (int level, int col, int row
         return false;
     }
 
-    // seg: {row}.jpeg
+    // seg: {row}.tile - strip the .tile extension if present
     seg = seg.Subsegment(iPos + 1);
     iPos = seg.IndexOf('.');
-    if (iPos <= 0)
+    
+    string rowStr = iPos > 0 ? seg.Substring(0, iPos) : seg.ToString();
+    if (!int.TryParse(rowStr, out var resultRow))
     {
         result = default;
         return false;
     }
 
-    if (!int.TryParse(seg.Substring(0, iPos), out var resultRow))
-    {
-        result = default;
-        return false;
-    }
-
-    // seg: jpeg
-    seg = seg.Subsegment(iPos + 1);
-
-    result = (level: resultLevel, col: resultCol, row: resultRow, format: seg.ToString());
+    result = (level: resultLevel, col: resultCol, row: resultRow);
     return true;
 }

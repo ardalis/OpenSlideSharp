@@ -1,11 +1,11 @@
-# SingleSlideServer
+# MultiSlideServer
 
-A minimal ASP.NET Core web application that serves a single whole-slide image using [OpenSlide](http://openslide.org/) and displays it in the browser using [OpenSeadragon](https://openseadragon.github.io/).
+A multi-image ASP.NET Core web application that serves multiple whole-slide images using [OpenSlide](http://openslide.org/) and displays them in the browser using [OpenSeadragon](https://openseadragon.github.io/).
 
 ## Prerequisites
 
 - .NET 8.0 SDK or later
-- A whole-slide image file supported by OpenSlide
+- One or more whole-slide image files supported by OpenSlide
 
 ## Supported Image Formats
 
@@ -25,21 +25,28 @@ OpenSlide supports several whole-slide image formats, including:
 
 ## Configuration
 
-The application expects an image file path to be configured in `appsettings.json`:
+The application expects image configurations in `appsettings.json`:
 
 ```json
 {
-  "Image": {
-    "Path": "image.tiff",
-    "TileCachePath": "./tile_cache",
-    "EnableDiskCache": true,
-    "TileFormat": {
-      "Default": "jpeg",
-      "LosslessFormat": "png",
-      "LosslessLevelCount": 1,
-      "JpegQuality": 90
+  "TileCachePath": "./tile_cache",
+  "EnableDiskCache": true,
+  "TileFormat": {
+    "Default": "jpeg",
+    "LosslessFormat": "png",
+    "LosslessLevelCount": 1,
+    "JpegQuality": 90
+  },
+  "Images": [
+    {
+      "Name": "slide1",
+      "Path": "/path/to/slide1.svs"
+    },
+    {
+      "Name": "slide2",
+      "Path": "/path/to/slide2.ndpi"
     }
-  }
+  ]
 }
 ```
 
@@ -47,10 +54,17 @@ The application expects an image file path to be configured in `appsettings.json
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `Path` | Path to the whole-slide image file | `image.tiff` |
 | `TileCachePath` | Directory for cached tile images | `./tile_cache` |
 | `EnableDiskCache` | Enable/disable disk caching of tiles | `true` |
 | `TileFormat` | Tile format configuration (see below) | See below |
+| `Images` | Array of image configurations | `[]` |
+
+### Image Entry Configuration
+
+| Setting | Description |
+|---------|-------------|
+| `Name` | Unique identifier for the image (used in URLs) |
+| `Path` | Path to the whole-slide image file |
 
 ### Tile Format Configuration (Lossless Support)
 
@@ -71,102 +85,85 @@ For regulatory compliance in medical/diagnostic imaging, the server supports ser
 
 > **Note:** JPEG is always lossy, even at quality 100. PNG uses lossless DEFLATE compression, ensuring bit-perfect fidelity to the original slide data. The URL extension always shows `.jpeg` for OpenSeadragon compatibility, but the server returns the correct `Content-Type` header and browsers decode the actual format correctly.
 
-### Setting Up Your Image
-
-1. **Option 1:** Place your whole-slide image in the project directory and name it `image.tiff`, or
-2. **Option 2:** Update the `Image:Path` setting in `appsettings.json` to point to your image file (can be an absolute or relative path)
-
-You can also override this setting using:
-
-**Command line arguments:**
-```bash
-dotnet run --Image:Path=/path/to/your/slide.svs
-```
-
-**Environment variables:**
-```bash
-Image__Path=/path/to/your/slide.svs dotnet run
-```
-
 ## Running the Application
 
 ```bash
-cd example/SingleSlideServer
+cd example/MultiSlideServer
 dotnet run
-```
-
-With a custom image path:
-
-```bash
-dotnet run --Image:Path=/path/to/your/slide.svs
-```
-
-Or from the solution root:
-
-```bash
-dotnet run --project example/SingleSlideServer/SingleSlideServer.csproj --Image:Path=/path/to/your/slide.svs
 ```
 
 The application will start and listen on the configured URLs (typically `http://localhost:5000` or `https://localhost:5001`).
 
 ## How It Works
 
-1. **ImageProvider** - Loads the whole-slide image using OpenSlideSharp and creates a `DeepZoomGenerator` for tile-based access
-2. **HomeController** - Serves the Deep Zoom Image (DZI) XML descriptor at `/image.dzi`
-3. **Tile Middleware** - Serves individual image tiles at `/image_files/{level}/{col}_{row}.jpeg`
-4. **OpenSeadragon Viewer** - The frontend uses OpenSeadragon to display the zoomable image with smooth pan/zoom navigation
+1. **ImageProvider** - Manages multiple whole-slide images using OpenSlideSharp with a `DeepZoomGeneratorCache` for efficient memory management
+2. **DeepZoomGeneratorCache** - Caches `DeepZoomGenerator` instances with sliding expiration
+3. **Tile Middleware** - Serves individual image tiles at `/storage/{name}_files/{level}/{col}_{row}.jpeg`
+4. **OpenSeadragon Viewer** - The frontend uses OpenSeadragon to display zoomable images with smooth pan/zoom navigation
 
 ## Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Main viewer page (index.html) |
-| `/image.dzi` | GET | Deep Zoom Image XML descriptor |
-| `/image_files/{level}/{col}_{row}.jpeg` | GET | Individual image tiles (cached if enabled) |
-| `/api/tiles/generate` | POST | Pre-generate all tiles to disk cache |
-| `/api/tiles/stats` | GET | Get cache statistics |
-| `/api/tiles/cache` | DELETE | Clear the tile cache |
+| `/` | GET | Home page listing all available images |
+| `/slide/{name}.html` | GET | Viewer page for a specific image |
+| `/storage/{name}.dzi` | GET | Deep Zoom Image XML descriptor for an image |
+| `/storage/{name}_files/{level}/{col}_{row}.jpeg` | GET | Individual image tiles (format determined by level) |
+| `/api/tiles/{imageName}/generate` | POST | Pre-generate all tiles for an image |
+| `/api/tiles/{imageName}/stats` | GET | Get cache statistics for an image |
+| `/api/tiles/{imageName}/cache` | DELETE | Clear the tile cache for an image |
+| `/api/tiles/generate-all` | POST | Pre-generate tiles for all images |
+| `/api/tiles/stats` | GET | Get cache statistics for all images |
+| `/api/tiles/cache` | DELETE | Clear all tile caches |
 
 ## Tile Caching
 
 When `EnableDiskCache` is `true`:
 - Tiles are checked on disk first before generating
 - Generated tiles are automatically saved to disk for future requests
-- Use `/api/tiles/generate` to pre-generate all tiles upfront
+- Each image has its own cache subdirectory: `{TileCachePath}/{imageName}/`
+- Use the API endpoints to pre-generate tiles upfront
 
 ### Pre-generating Tiles
 
-To pre-generate all tiles (useful for production):
+To pre-generate all tiles for a specific image:
 
 ```bash
-curl -X POST http://localhost:5000/api/tiles/generate
+curl -X POST http://localhost:5000/api/tiles/slide1/generate
+```
+
+To pre-generate tiles for all images:
+
+```bash
+curl -X POST http://localhost:5000/api/tiles/generate-all
 ```
 
 With overwrite option to regenerate existing tiles:
 
 ```bash
-curl -X POST "http://localhost:5000/api/tiles/generate?overwrite=true"
+curl -X POST "http://localhost:5000/api/tiles/slide1/generate?overwrite=true"
 ```
 
 ### Cache Statistics
 
+For a specific image:
+```bash
+curl http://localhost:5000/api/tiles/slide1/stats
+```
+
+For all images:
 ```bash
 curl http://localhost:5000/api/tiles/stats
 ```
 
-Returns:
-```json
-{
-  "cachedTiles": 1234,
-  "totalTiles": 5000,
-  "cachePercentage": 24.68,
-  "cacheSizeBytes": 52428800,
-  "cacheSizeMB": 50.0
-}
-```
-
 ### Clearing the Cache
 
+For a specific image:
+```bash
+curl -X DELETE http://localhost:5000/api/tiles/slide1/cache
+```
+
+For all images:
 ```bash
 curl -X DELETE http://localhost:5000/api/tiles/cache
 ```
@@ -179,6 +176,10 @@ You can download sample whole-slide images for testing from:
 - [TCGA (The Cancer Genome Atlas)](https://portal.gdc.cancer.gov/) - requires registration
 
 ## Troubleshooting
+
+### "Image not found"
+
+Make sure the image name in the URL matches the `Name` property in the configuration.
 
 ### "The specified file is not a valid OpenSlide image"
 
