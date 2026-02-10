@@ -237,14 +237,31 @@ SingleSlideServer/
 
 ## Implementation Order
 
-1. [ ] Update `ImageOption.cs` with new properties
-2. [ ] Update `appsettings.json` with default values
-3. [ ] Create `TileGeneratorService.cs`
-4. [ ] Create `TilesController.cs` with generate endpoint
-5. [ ] Update `Program.cs` middleware to check disk cache
-6. [ ] Register new services in `Program.cs`
-7. [ ] Update `README.md` with new features
-8. [ ] Test with sample image
+1. [x] Update `ImageOption.cs` with new properties
+2. [x] Update `appsettings.json` with default values
+3. [x] Create `TileGeneratorService.cs`
+4. [x] Create tile generation endpoints (implemented via minimal APIs in Program.cs instead of separate controller)
+5. [x] Update `Program.cs` middleware to check disk cache
+6. [x] Register new services in `Program.cs`
+7. [x] Update `README.md` with new features
+8. [x] Test with sample image
+
+## Completion Notes
+
+**Status:** ✅ COMPLETED - February 9, 2026
+
+All planned features have been implemented:
+- Disk-based tile caching with configurable cache path
+- Cache-first tile serving with automatic on-the-fly generation fallback
+- `/api/tiles/generate` endpoint for pre-generating tiles
+- `/api/tiles/stats` endpoint for cache statistics
+- `/api/tiles/cache` DELETE endpoint for cache clearing
+- Comprehensive README documentation
+
+**Implementation Notes:**
+- Used minimal APIs instead of a separate `TilesController.cs` for cleaner, more modern code
+- Added additional helper methods to `TileGeneratorService` (cache stats, clear cache)
+- Endpoints return JSON with detailed status information
 
 ## Considerations
 
