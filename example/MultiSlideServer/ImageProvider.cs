@@ -1,57 +1,58 @@
 ﻿using Microsoft.Extensions.Options;
 using MultiSlideServer.Cache;
 using OpenSlideSharp;
-using System.Collections.Generic;
 
-namespace MultiSlideServer
+namespace MultiSlideServer;
+
+public class ImageProvider
 {
-    public class ImageProvider
+    private readonly ImageOptionItem[] _images;
+    private readonly DeepZoomGeneratorCache _cache;
+    private readonly ImagesOption _options;
+
+    public ImageProvider(IOptions<ImagesOption> options, DeepZoomGeneratorCache cache)
     {
-        private ImageOptionItem[] _images;
-        private DeepZoomGeneratorCache _cache;
+        _options = options.Value;
+        _images = _options.Images;
+        _cache = cache;
+    }
 
-        public ImageProvider(IOptions<ImagesOption> options, DeepZoomGeneratorCache cache)
+    public IReadOnlyList<ImageOptionItem> Images => _images;
+    public DeepZoomGeneratorCache Cache => _cache;
+    public bool EnableDiskCache => _options.EnableDiskCache;
+    public string TileCachePath => _options.TileCachePath;
+
+    public bool TryGetImagePath(string name, out string path)
+    {
+        foreach (var item in _images)
         {
-            _images = options.Value.Images;
-            _cache = cache;
+            if (item.Name == name)
+            {
+                path = item.Path;
+                return true;
+            }
         }
+        path = null!;
+        return false;
+    }
 
-        public IReadOnlyList<ImageOptionItem> Images => _images;
-
-        public DeepZoomGeneratorCache Cache => _cache;
-
-        public bool TryGetImagePath(string name, out string path)
+    public RetainableDeepZoomGenerator RetainDeepZoomGenerator(string name, string path)
+    {
+        if (_cache.TryGet(name, out var dz))
         {
-            foreach (var item in _images)
-            {
-                if (item.Name == name)
-                {
-                    path = item.Path;
-                    return true;
-                }
-            }
-            path = null;
-            return false;
-        }
-
-        public RetainableDeepZoomGenerator RetainDeepZoomGenerator(string name, string path)
-        {
-            RetainableDeepZoomGenerator dz;
-            if (_cache.TryGet(name, out dz))
-            {
-                dz.Retain();
-                return dz;
-            }
-            dz = new RetainableDeepZoomGenerator(OpenSlideImage.Open(path));
-            if (_cache.TrySet(name, dz))
-            {
-                dz.Retain();
-                return dz;
-            }
             dz.Retain();
-            dz.Dispose();
             return dz;
         }
 
+        dz = new RetainableDeepZoomGenerator(OpenSlideImage.Open(path));
+        if (_cache.TrySet(name, dz))
+        {
+            dz.Retain();
+            return dz;
+        }
+
+        dz.Retain();
+        dz.Dispose();
+        return dz;
     }
 }
