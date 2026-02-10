@@ -11,11 +11,13 @@ public class TileGeneratorService
 {
     private readonly ImageProvider _imageProvider;
     private readonly ImagesOption _options;
+    private readonly ILogger<TileGeneratorService> _logger;
 
-    public TileGeneratorService(ImageProvider imageProvider, IOptions<ImagesOption> options)
+    public TileGeneratorService(ImageProvider imageProvider, IOptions<ImagesOption> options, ILogger<TileGeneratorService> logger)
     {
         _imageProvider = imageProvider;
         _options = options.Value;
+        _logger = logger;
     }
 
     public string GetTileCachePath(string imageName, int level, int col, int row, string format)
@@ -59,6 +61,7 @@ public class TileGeneratorService
         IProgress<TileGenerationProgress>? progress = null,
         CancellationToken ct = default)
     {
+        _logger.LogInformation("Starting tile generation for image '{ImageName}'", imageName);
         if (!_imageProvider.TryGetImagePath(imageName, out var imagePath))
             throw new ArgumentException($"Image '{imageName}' not found", nameof(imageName));
 

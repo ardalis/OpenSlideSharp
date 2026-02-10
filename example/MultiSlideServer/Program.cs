@@ -1,9 +1,11 @@
-﻿using Microsoft.Extensions.Options;
+﻿using Microsoft.AspNetCore.ResponseCompression;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
 using MultiSlideServer;
 using MultiSlideServer.Cache;
 using MultiSlideServer.Services;
 using OpenSlideSharp.BitmapExtensions;
+using System.IO.Compression;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -14,6 +16,17 @@ builder.Services.AddSingleton<DeepZoomGeneratorCache>();
 builder.Services.AddSingleton<ImageProvider>();
 builder.Services.AddSingleton<TileGeneratorService>();
 
+// Add response compression for PNG tiles (JPEG is already compressed)
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+    options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "image/png" });
+    options.Providers.Add<GzipCompressionProvider>();
+    options.Providers.Add<BrotliCompressionProvider>();
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline
@@ -21,6 +34,9 @@ if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
 }
+
+// Enable response compression early in the pipeline
+app.UseResponseCompression();
 
 // Tile serving middleware with disk caching (handles /storage/{name}_files/{level}/{col}_{row}.jpeg)
 // Note: URL extension is always .jpeg but server returns PNG for highest resolution levels
@@ -57,6 +73,10 @@ app.Use(async (context, next) =>
         var effectiveFormat = provider.TileFormat.GetFormatForLevel(result.level, dz.LevelCount);
         
         response.ContentType = TileFormatOptions.GetContentType(effectiveFormat);
+        
+        // Add caching headers - tiles are immutable so cache aggressively
+        response.Headers.CacheControl = "public, max-age=31536000, immutable";
+        response.Headers["Vary"] = "Accept-Encoding";
         var fileExtension = TileFormatOptions.GetFileExtension(effectiveFormat);
 
         // Check disk cache first
@@ -155,16 +175,73 @@ app.MapGet("/slide/{name}.html", (string name, ImageProvider provider) =>
     <meta charset=""UTF-8"">
     <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
     <title>{name} - Multi Slide Server</title>
+    <style>
+        #controls {{
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(255,255,255,0.9);
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }}
+        #controls button {{
+            padding: 8px 16px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #fff;
+        }}
+        #controls button:hover {{ background: #f0f0f0; }}
+        #controls button:disabled {{ opacity: 0.6; cursor: not-allowed; }}
+        #status {{ margin-top: 8px; font-size: 12px; color: #666; }}
+    </style>
 </head>
 <body>
     <div id=""openseadragon1"" style=""position:fixed; left: 0; right: 0; top: 0; bottom: 0;""></div>
+    <div id=""controls"">
+        <button id=""pregenBtn"" onclick=""pregenerateTiles()"">Pre-generate Tiles</button>
+        <div id=""status""></div>
+    </div>
     <script src=""/openseadragon.js""></script>
     <script type=""text/javascript"">
         var viewer = OpenSeadragon({{
             id: ""openseadragon1"",
             prefixUrl: ""/images/"",
-            tileSources: ""/storage/{name}.dzi""
+            tileSources: ""/storage/{name}.dzi"",
+            // Performance optimizations
+            imageLoaderLimit: 4,           // Limit concurrent tile requests (reduces server load)
+            immediateRender: true,         // Render tiles as soon as they load
+            placeholderFillStyle: '#f0f0f0',  // Show placeholder while loading
+            maxImageCacheCount: 500,        // Increase tile cache size
+            timeout: 30000                  // Longer timeout to avoid retries
         }});
+
+        async function pregenerateTiles() {{
+            const btn = document.getElementById('pregenBtn');
+            const status = document.getElementById('status');
+            btn.disabled = true;
+            status.textContent = 'Starting tile generation...';
+            
+            try {{
+                const response = await fetch('/api/tiles/{name}/generate', {{
+                    method: 'POST'
+                }});
+                
+                if (response.ok) {{
+                    const result = await response.json();
+                    status.textContent = `Done! Generated ${{result.generatedCount}} tiles, ${{result.skippedCount}} already cached.`;
+                }} else {{
+                    const error = await response.text();
+                    status.textContent = 'Error: ' + error;
+                }}
+            }} catch (e) {{
+                status.textContent = 'Error: ' + e.message;
+            }} finally {{
+                btn.disabled = false;
+            }}
+        }}
     </script>
 </body>
 </html>";
