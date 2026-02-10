@@ -39,21 +39,33 @@ public class ImageProvider
 
     public RetainableDeepZoomGenerator RetainDeepZoomGenerator(string name, string path)
     {
-        if (_cache.TryGet(name, out var dz))
+        // Retry loop to handle race condition where cache entry is evicted
+        // between TryGet and Retain calls
+        while (true)
         {
-            dz.Retain();
-            return dz;
-        }
+            if (_cache.TryGet(name, out var dz))
+            {
+                try
+                {
+                    dz.Retain();
+                    return dz;
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Entry was evicted between TryGet and Retain, retry
+                    continue;
+                }
+            }
 
-        dz = new RetainableDeepZoomGenerator(OpenSlideImage.Open(path));
-        if (_cache.TrySet(name, dz))
-        {
-            dz.Retain();
-            return dz;
-        }
+            dz = new RetainableDeepZoomGenerator(OpenSlideImage.Open(path));
+            if (_cache.TrySet(name, dz))
+            {
+                dz.Retain();
+                return dz;
+            }
 
-        dz.Retain();
-        dz.Dispose();
-        return dz;
+            // Another thread added an entry, dispose ours and retry
+            dz.Dispose();
+        }
     }
 }
