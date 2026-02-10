@@ -2,6 +2,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Runtime.InteropServices;
 using static OpenSlideSharp.DeepZoomGenerator;
 
 namespace OpenSlideSharp.BitmapExtensions
@@ -41,8 +42,10 @@ namespace OpenSlideSharp.BitmapExtensions
         /// <returns></returns>
         public static MemoryStream GetTileAsJpegStream(this DeepZoomGenerator generator, int level, int col, int row, out TileInfo tileInfo, int? quality = null)
         {
-            return GetTileImage(generator, level, col, row, out tileInfo).ToStream(ImageFormat.Jpeg, quality);
-
+            using (var bitmap = GetTileImage(generator, level, col, row, out tileInfo))
+            {
+                return bitmap.ToStream(ImageFormat.Jpeg, quality);
+            }
         }
 
         /// <summary>
@@ -75,7 +78,10 @@ namespace OpenSlideSharp.BitmapExtensions
         /// <returns></returns>
         public static MemoryStream GetTileAsPngStream(this DeepZoomGenerator generator, int level, int col, int row, out TileInfo tileInfo, int? quality = null)
         {
-            return GetTileImage(generator, level, col, row, out tileInfo).ToStream(ImageFormat.Png, quality);
+            using (var bitmap = GetTileImage(generator, level, col, row, out tileInfo))
+            {
+                return bitmap.ToStream(ImageFormat.Png, quality);
+            }
         }
 
         /// <summary>
@@ -87,15 +93,29 @@ namespace OpenSlideSharp.BitmapExtensions
         /// <param name="row"></param>
         /// <param name="tileInfo"></param>
         /// <returns></returns>
-        public unsafe static Bitmap GetTileImage(this DeepZoomGenerator generator, int level, int col, int row, out TileInfo tileInfo)
+        public static Bitmap GetTileImage(this DeepZoomGenerator generator, int level, int col, int row, out TileInfo tileInfo)
         {
             if (generator == null)
                 throw new NullReferenceException();
             var raw = generator.GetTile(level, col, row, out tileInfo);
-            fixed (byte* scan0 = raw)
+            
+            // Create a bitmap with its own memory and copy the pixel data into it.
+            // This is necessary because the raw byte array must remain valid for the
+            // lifetime of the bitmap, and using 'fixed' only pins memory temporarily.
+            var bitmap = new Bitmap((int)tileInfo.Width, (int)tileInfo.Height, PixelFormat.Format32bppArgb);
+            var bitmapData = bitmap.LockBits(
+                new Rectangle(0, 0, bitmap.Width, bitmap.Height),
+                ImageLockMode.WriteOnly,
+                PixelFormat.Format32bppArgb);
+            try
             {
-                return new Bitmap((int)tileInfo.Width, (int)tileInfo.Height, (int)tileInfo.Width * 4, PixelFormat.Format32bppArgb, (IntPtr)scan0);
+                Marshal.Copy(raw, 0, bitmapData.Scan0, raw.Length);
             }
+            finally
+            {
+                bitmap.UnlockBits(bitmapData);
+            }
+            return bitmap;
         }
     }
 }
