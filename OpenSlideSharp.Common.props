@@ -17,7 +17,7 @@
 
 
   <ItemGroup>
-    <None Include="$(SolutionDir)\openslide_logo.png">
+    <None Include="$(MSBuildThisFileDirectory)openslide_logo.png">
       <Visible>false</Visible>
       <Pack>True</Pack>
       <PackagePath></PackagePath>
