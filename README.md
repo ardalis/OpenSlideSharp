@@ -6,6 +6,7 @@
 [![Nuget version](https://img.shields.io/nuget/v/OpenSlideSharp)](https://www.nuget.org/packages?q=OpenSlideSharp)
 
 # OpenSlideSharp
+
 .NET bindings for OpenSlide (http://openslide.org/).    
 
 Thanks to @yigolden for his work in [OpenSlideNET](https://github.com/yigolden/OpenSlideNET).
@@ -17,7 +18,7 @@ Install-Package OpenSlideSharp.Windows -Version 1.1.0
 
 ## Index
 
-1.  [OpenSlideSharp](/src/OpenSlideSharp)    
+1.  [OpenSlideSharp](/src/OpenSlideSharp)
     openslide warpper, include DeepZoomGenerator, but no native *.dll.
 
 2.  [OpenSlideSharp.BitmapExtensions](/src/OpenSlideSharp.BitmapExtensions)    
@@ -47,12 +48,13 @@ Install-Package OpenSlideSharp.Windows -Version 1.1.0
     OpenSlideSharp for windows all in one, include [1],[2],[5].
 
 ## Suggestion
+
 1.  The GIS (Geographic Information System) suite (include layer, editor) makes it easy to develop features related to medical image slides. It would be better to use [openlayer](https://openlayers.org/) or [Leaflet](https://leafletjs.com/) for web.    
 
 2.  If you want to customize a digital medical imaging format, Perhaps refer to the implementation of **MBTiles**, using the **SQLite** database. Sometimes it is necessary to encrypt the data, and that's okay, use a **SQLCipher** database(compatible with sqlite). Databases are highly scalable and easy to use.
 
+## Example
 
-## Example 
 A slide viewer by [Mapsui](https://github.com/Mapsui/Mapsui)    
 Download [here](https://github.com/IOL0ol1/OpenSlideSharp/releases)    
 ![mapsui](./preview.gif)
