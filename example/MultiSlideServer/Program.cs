@@ -22,7 +22,7 @@ if (app.Environment.IsDevelopment())
     app.UseDeveloperExceptionPage();
 }
 
-// Tile serving middleware with disk caching (handles /storage/{name}_files/{level}/{col}_{row}.jpeg)
+// Tile serving middleware with disk caching (handles /storage/{name}_files/{level}/{col}_{row}.{format})
 app.Use(async (context, next) =>
 {
     if (!context.Request.Path.StartsWithSegments("/storage", out var remaining))
@@ -37,7 +37,8 @@ app.Use(async (context, next) =>
         return;
     }
 
-    if (result.format != "jpeg")
+    // Accept both jpeg and png format requests
+    if (result.format != "jpeg" && result.format != "png")
     {
         await next();
         return;
@@ -54,48 +55,58 @@ app.Use(async (context, next) =>
         return;
     }
 
-    response.ContentType = "image/jpeg";
-
-    // Check disk cache first
-    if (provider.EnableDiskCache)
-    {
-        var cachedStream = await tileService.GetCachedTileAsync(
-            result.name, result.level, result.col, result.row);
-
-        if (cachedStream != null)
-        {
-            await using (cachedStream)
-            {
-                await cachedStream.CopyToAsync(response.Body);
-            }
-            return;
-        }
-    }
-
-    // Generate tile on-the-fly
+    // Get the DeepZoomGenerator to determine level count for format decision
     var dz = provider.RetainDeepZoomGenerator(result.name, path);
     try
     {
-        using var tileStream = dz.GetTileAsJpegStream(result.level, result.col, result.row, out _);
+        // Determine effective format based on configuration and level
+        var effectiveFormat = provider.TileFormat.GetFormatForLevel(result.level, dz.LevelCount);
+        
+        response.ContentType = TileFormatOptions.GetContentType(effectiveFormat);
+        var fileExtension = TileFormatOptions.GetFileExtension(effectiveFormat);
 
+        // Check disk cache first
         if (provider.EnableDiskCache)
         {
-            // Read into memory so we can write to both file and response
-            using var memoryStream = new MemoryStream();
-            await tileStream.CopyToAsync(memoryStream);
+            var cachedStream = await tileService.GetCachedTileAsync(
+                result.name, result.level, result.col, result.row, effectiveFormat);
 
-            // Save to disk
-            memoryStream.Position = 0;
-            await tileService.SaveTileToDiskAsync(
-                result.name, result.level, result.col, result.row, memoryStream);
-
-            // Send to response
-            memoryStream.Position = 0;
-            await memoryStream.CopyToAsync(response.Body);
+            if (cachedStream != null)
+            {
+                await using (cachedStream)
+                {
+                    await cachedStream.CopyToAsync(response.Body);
+                }
+                return;
+            }
         }
-        else
+
+        // Generate tile on-the-fly in the appropriate format
+        MemoryStream tileStream = effectiveFormat == "png"
+            ? dz.GetTileAsPngStream(result.level, result.col, result.row, out _)
+            : dz.GetTileAsJpegStream(result.level, result.col, result.row, out _, provider.TileFormat.JpegQuality);
+
+        using (tileStream)
         {
-            await tileStream.CopyToAsync(response.Body);
+            if (provider.EnableDiskCache)
+            {
+                // Read into memory so we can write to both file and response
+                using var memoryStream = new MemoryStream();
+                await tileStream.CopyToAsync(memoryStream);
+
+                // Save to disk
+                memoryStream.Position = 0;
+                await tileService.SaveTileToDiskAsync(
+                    result.name, result.level, result.col, result.row, memoryStream, effectiveFormat);
+
+                // Send to response
+                memoryStream.Position = 0;
+                await memoryStream.CopyToAsync(response.Body);
+            }
+            else
+            {
+                await tileStream.CopyToAsync(response.Body);
+            }
         }
     }
     finally

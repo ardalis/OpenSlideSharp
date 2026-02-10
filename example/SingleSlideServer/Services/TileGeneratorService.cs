@@ -35,12 +35,17 @@ public class TileGeneratorService
         var processed = 0;
 
         var levelTiles = dz.LevelTiles.ToList();
+        var formatOptions = _options.TileFormat;
 
         for (int level = 0; level < dz.LevelCount; level++)
         {
             var tileDims = levelTiles[level];
             var cols = tileDims.Cols;
             var rows = tileDims.Rows;
+
+            // Determine format for this level
+            var format = formatOptions.GetFormatForLevel(level, dz.LevelCount);
+            var fileExtension = TileFormatOptions.GetFileExtension(format);
 
             var levelPath = Path.Combine(_options.TileCachePath, level.ToString());
             Directory.CreateDirectory(levelPath);
@@ -51,7 +56,7 @@ public class TileGeneratorService
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
-                    var tilePath = Path.Combine(levelPath, $"{col}_{row}.jpeg");
+                    var tilePath = Path.Combine(levelPath, $"{col}_{row}.{fileExtension}");
 
                     if (!overwrite && File.Exists(tilePath))
                     {
@@ -59,7 +64,11 @@ public class TileGeneratorService
                     }
                     else
                     {
-                        using var tileStream = dz.GetTileAsJpegStream(level, col, row, out _);
+                        // Generate tile in the appropriate format
+                        using var tileStream = format == "png"
+                            ? dz.GetTileAsPngStream(level, col, row, out _)
+                            : dz.GetTileAsJpegStream(level, col, row, out _, formatOptions.JpegQuality);
+                        
                         await using var fileStream = File.Create(tilePath);
                         await tileStream.CopyToAsync(fileStream, cancellationToken);
                         tilesGenerated++;
@@ -74,9 +83,12 @@ public class TileGeneratorService
         return new TileGenerationResult(tilesGenerated, tilesSkipped, DateTime.UtcNow - startTime);
     }
 
-    public string GetTileCachePath(int level, int col, int row)
+    public string GetTileCachePath(int level, int col, int row, string? format = null)
     {
-        return Path.Combine(_options.TileCachePath, level.ToString(), $"{col}_{row}.jpeg");
+        var dz = _imageProvider.DeepZoomGenerator;
+        var effectiveFormat = format ?? _options.TileFormat.GetFormatForLevel(level, dz.LevelCount);
+        var fileExtension = TileFormatOptions.GetFileExtension(effectiveFormat);
+        return Path.Combine(_options.TileCachePath, level.ToString(), $"{col}_{row}.{fileExtension}");
     }
 
     public bool TileExistsOnDisk(int level, int col, int row)
@@ -84,9 +96,9 @@ public class TileGeneratorService
         return File.Exists(GetTileCachePath(level, col, row));
     }
 
-    public async Task SaveTileToDiskAsync(int level, int col, int row, Stream tileData, CancellationToken cancellationToken = default)
+    public async Task SaveTileToDiskAsync(int level, int col, int row, Stream tileData, string? format = null, CancellationToken cancellationToken = default)
     {
-        var tilePath = GetTileCachePath(level, col, row);
+        var tilePath = GetTileCachePath(level, col, row, format);
         var directory = Path.GetDirectoryName(tilePath)!;
         Directory.CreateDirectory(directory);
 
@@ -107,8 +119,11 @@ public class TileGeneratorService
         if (!Directory.Exists(_options.TileCachePath))
             return (0, 0);
 
-        var files = Directory.GetFiles(_options.TileCachePath, "*.jpeg", SearchOption.AllDirectories);
-        var totalSize = files.Sum(f => new FileInfo(f).Length);
-        return (files.Length, totalSize);
+        // Count both jpeg and png files
+        var jpegFiles = Directory.GetFiles(_options.TileCachePath, "*.jpeg", SearchOption.AllDirectories);
+        var pngFiles = Directory.GetFiles(_options.TileCachePath, "*.png", SearchOption.AllDirectories);
+        var allFiles = jpegFiles.Concat(pngFiles).ToArray();
+        var totalSize = allFiles.Sum(f => new FileInfo(f).Length);
+        return (allFiles.Length, totalSize);
     }
 }

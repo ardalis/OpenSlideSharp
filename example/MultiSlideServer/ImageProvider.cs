@@ -21,6 +21,7 @@ public class ImageProvider
     public DeepZoomGeneratorCache Cache => _cache;
     public bool EnableDiskCache => _options.EnableDiskCache;
     public string TileCachePath => _options.TileCachePath;
+    public TileFormatOptions TileFormat => _options.TileFormat;
 
     public bool TryGetImagePath(string name, out string path)
     {

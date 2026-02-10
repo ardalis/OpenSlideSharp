@@ -18,20 +18,21 @@ public class TileGeneratorService
         _options = options.Value;
     }
 
-    public string GetTileCachePath(string imageName, int level, int col, int row)
+    public string GetTileCachePath(string imageName, int level, int col, int row, string format)
     {
-        // Per-image subfolder structure: {cache}/{imageName}/{level}/{col}_{row}.jpeg
-        return Path.Combine(_options.TileCachePath, imageName, level.ToString(), $"{col}_{row}.jpeg");
+        // Per-image subfolder structure: {cache}/{imageName}/{level}/{col}_{row}.{format}
+        var fileExtension = TileFormatOptions.GetFileExtension(format);
+        return Path.Combine(_options.TileCachePath, imageName, level.ToString(), $"{col}_{row}.{fileExtension}");
     }
 
-    public bool TileExistsOnDisk(string imageName, int level, int col, int row)
+    public bool TileExistsOnDisk(string imageName, int level, int col, int row, string format)
     {
-        return File.Exists(GetTileCachePath(imageName, level, col, row));
+        return File.Exists(GetTileCachePath(imageName, level, col, row, format));
     }
 
-    public async Task<Stream?> GetCachedTileAsync(string imageName, int level, int col, int row, CancellationToken ct = default)
+    public async Task<Stream?> GetCachedTileAsync(string imageName, int level, int col, int row, string format, CancellationToken ct = default)
     {
-        var cachePath = GetTileCachePath(imageName, level, col, row);
+        var cachePath = GetTileCachePath(imageName, level, col, row, format);
         if (!File.Exists(cachePath))
             return null;
 
@@ -42,9 +43,9 @@ public class TileGeneratorService
         return memoryStream;
     }
 
-    public async Task SaveTileToDiskAsync(string imageName, int level, int col, int row, Stream tileData, CancellationToken ct = default)
+    public async Task SaveTileToDiskAsync(string imageName, int level, int col, int row, Stream tileData, string format, CancellationToken ct = default)
     {
-        var tilePath = GetTileCachePath(imageName, level, col, row);
+        var tilePath = GetTileCachePath(imageName, level, col, row, format);
         var directory = Path.GetDirectoryName(tilePath)!;
         Directory.CreateDirectory(directory);
 
@@ -63,6 +64,7 @@ public class TileGeneratorService
 
         var startTime = DateTime.UtcNow;
         var dz = _imageProvider.RetainDeepZoomGenerator(imageName, imagePath);
+        var formatOptions = _options.TileFormat;
 
         try
         {
@@ -76,6 +78,9 @@ public class TileGeneratorService
             for (int level = 0; level < dz.LevelCount; level++)
             {
                 var tileDims = levelTiles[level];
+                
+                // Determine format for this level
+                var format = formatOptions.GetFormatForLevel(level, dz.LevelCount);
 
                 for (int col = 0; col < tileDims.Cols; col++)
                 {
@@ -83,14 +88,18 @@ public class TileGeneratorService
                     {
                         ct.ThrowIfCancellationRequested();
 
-                        if (!overwrite && TileExistsOnDisk(imageName, level, col, row))
+                        if (!overwrite && TileExistsOnDisk(imageName, level, col, row, format))
                         {
                             tilesSkipped++;
                         }
                         else
                         {
-                            using var tileStream = dz.GetTileAsJpegStream(level, col, row, out _);
-                            await SaveTileToDiskAsync(imageName, level, col, row, tileStream, ct);
+                            // Generate tile in the appropriate format
+                            using var tileStream = format == "png"
+                                ? dz.GetTileAsPngStream(level, col, row, out _)
+                                : dz.GetTileAsJpegStream(level, col, row, out _, formatOptions.JpegQuality);
+                            
+                            await SaveTileToDiskAsync(imageName, level, col, row, tileStream, format, ct);
                             tilesGenerated++;
                         }
 
@@ -131,9 +140,12 @@ public class TileGeneratorService
         if (!Directory.Exists(imageCachePath))
             return (0, 0);
 
-        var files = Directory.GetFiles(imageCachePath, "*.jpeg", SearchOption.AllDirectories);
-        var totalSize = files.Sum(f => new FileInfo(f).Length);
-        return (files.Length, totalSize);
+        // Count both jpeg and png files
+        var jpegFiles = Directory.GetFiles(imageCachePath, "*.jpeg", SearchOption.AllDirectories);
+        var pngFiles = Directory.GetFiles(imageCachePath, "*.png", SearchOption.AllDirectories);
+        var allFiles = jpegFiles.Concat(pngFiles).ToArray();
+        var totalSize = allFiles.Sum(f => new FileInfo(f).Length);
+        return (allFiles.Length, totalSize);
     }
 
     public (int fileCount, long totalSize) GetTotalCacheStats()
@@ -141,8 +153,11 @@ public class TileGeneratorService
         if (!Directory.Exists(_options.TileCachePath))
             return (0, 0);
 
-        var files = Directory.GetFiles(_options.TileCachePath, "*.jpeg", SearchOption.AllDirectories);
-        var totalSize = files.Sum(f => new FileInfo(f).Length);
-        return (files.Length, totalSize);
+        // Count both jpeg and png files
+        var jpegFiles = Directory.GetFiles(_options.TileCachePath, "*.jpeg", SearchOption.AllDirectories);
+        var pngFiles = Directory.GetFiles(_options.TileCachePath, "*.png", SearchOption.AllDirectories);
+        var allFiles = jpegFiles.Concat(pngFiles).ToArray();
+        var totalSize = allFiles.Sum(f => new FileInfo(f).Length);
+        return (allFiles.Length, totalSize);
     }
 }

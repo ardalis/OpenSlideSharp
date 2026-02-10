@@ -29,15 +29,23 @@ app.Map("/image_files", appBuilder =>
             return;
         }
 
-        if (result.format != "jpeg")
+        // Accept both jpeg and png format requests
+        if (result.format != "jpeg" && result.format != "png")
         {
             await next();
             return;
         }
 
         var options = context.RequestServices.GetRequiredService<IOptions<ImageOption>>().Value;
+        var provider = context.RequestServices.GetRequiredService<ImageProvider>();
+        var dz = provider.DeepZoomGenerator;
+
+        // Determine effective format based on configuration and level
+        var effectiveFormat = options.TileFormat.GetFormatForLevel(result.level, dz.LevelCount);
+        
         var response = context.Response;
-        response.ContentType = "image/jpeg";
+        response.ContentType = TileFormatOptions.GetContentType(effectiveFormat);
+        var fileExtension = TileFormatOptions.GetFileExtension(effectiveFormat);
 
         // Check disk cache first
         if (options.EnableDiskCache)
@@ -45,7 +53,7 @@ app.Map("/image_files", appBuilder =>
             var cachePath = Path.Combine(
                 options.TileCachePath,
                 result.level.ToString(),
-                $"{result.col}_{result.row}.jpeg");
+                $"{result.col}_{result.row}.{fileExtension}");
 
             if (File.Exists(cachePath))
             {
@@ -55,38 +63,42 @@ app.Map("/image_files", appBuilder =>
             }
         }
 
-        // Generate tile on-the-fly
-        var provider = context.RequestServices.GetRequiredService<ImageProvider>();
-        using var tileStream = provider.DeepZoomGenerator.GetTileAsJpegStream(result.level, result.col, result.row, out _);
+        // Generate tile on-the-fly in the appropriate format
+        MemoryStream tileStream = effectiveFormat == "png"
+            ? dz.GetTileAsPngStream(result.level, result.col, result.row, out _)
+            : dz.GetTileAsJpegStream(result.level, result.col, result.row, out _, options.TileFormat.JpegQuality);
 
-        // Optionally save to disk for future requests
-        if (options.EnableDiskCache)
+        using (tileStream)
         {
-            var cachePath = Path.Combine(
-                options.TileCachePath,
-                result.level.ToString(),
-                $"{result.col}_{result.row}.jpeg");
-
-            Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-
-            // Read into memory so we can write to both file and response
-            using var memoryStream = new MemoryStream();
-            await tileStream.CopyToAsync(memoryStream);
-
-            // Save to disk
-            memoryStream.Position = 0;
-            await using (var fileStream = File.Create(cachePath))
+            // Optionally save to disk for future requests
+            if (options.EnableDiskCache)
             {
-                await memoryStream.CopyToAsync(fileStream);
-            }
+                var cachePath = Path.Combine(
+                    options.TileCachePath,
+                    result.level.ToString(),
+                    $"{result.col}_{result.row}.{fileExtension}");
 
-            // Send to response
-            memoryStream.Position = 0;
-            await memoryStream.CopyToAsync(response.Body);
-        }
-        else
-        {
-            await tileStream.CopyToAsync(response.Body);
+                Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+
+                // Read into memory so we can write to both file and response
+                using var memoryStream = new MemoryStream();
+                await tileStream.CopyToAsync(memoryStream);
+
+                // Save to disk
+                memoryStream.Position = 0;
+                await using (var fileStream = File.Create(cachePath))
+                {
+                    await memoryStream.CopyToAsync(fileStream);
+                }
+
+                // Send to response
+                memoryStream.Position = 0;
+                await memoryStream.CopyToAsync(response.Body);
+            }
+            else
+            {
+                await tileStream.CopyToAsync(response.Body);
+            }
         }
     });
 });
